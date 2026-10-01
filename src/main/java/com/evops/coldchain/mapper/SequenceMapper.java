@@ -21,4 +21,7 @@ public interface SequenceMapper {
 
     @Select("SELECT NEXT VALUE FOR seq_cc_route_no")
     Long nextRouteNo();
+
+    @Select("SELECT NEXT VALUE FOR seq_cc_probe_no")
+    Long nextProbeNo();
 }

@@ -19,8 +19,9 @@ public class ShiroConfig {
         DefaultShiroFilterChainDefinition chain = new DefaultShiroFilterChainDefinition();
         chain.addPathDefinition("/api/health", "anon");
         chain.addPathDefinition("/error", "anon");
-        // 冷链台账接口使用 HTTP Basic，便于 curl/联调；浏览器会弹出登录框
+        // 冷链台账接口与管理页面使用 HTTP Basic，便于 curl/联调；浏览器会弹出登录框
         chain.addPathDefinition("/api/**", "authcBasic");
+        chain.addPathDefinition("/ui/**", "authcBasic");
         chain.addPathDefinition("/**", "authc");
         return chain;
     }

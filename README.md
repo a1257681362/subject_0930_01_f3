@@ -144,3 +144,74 @@ curl -u dispatcher:dispatcher123 -H 'Content-Type: application/json' \
 并验证空档/重叠/未覆盖全程/倒置/越界/温区非法/缓冲为负/责任人为空等**失败停点**返回明确说明，
 新版本只影响未派车批次、已派车批次持原快照、撤回仅限未生效未被引用版本、季节优先与 GENERAL 回退、
 预约时间窗重叠拒绝。
+
+## 冷链运输 V3：车载温度探头校准凭证管理
+
+在 V1/V2 台账上增加车载温度探头的校准凭证全生命周期管理：探头建档登记序列号、量程、
+校准机构与有效期；发运前车辆必须绑定仍在有效期内的持证探头；替换探头保留前后关系，
+历史温度记录不回写；证书上传生成 SHA-256 摘要，下载与作废逐次写审计流水。
+
+### 核心规则
+
+- **探头建档**：序列号库内唯一；登记量程上下限、校准机构、当前校准有效期；可选随附首份证书。
+- **凭证只追加**：新一轮校准=上传新的 VALID 凭证并切换为当前凭证；作废只追加 `VOID` 标记与
+  原因/时间，不删除文件、不改原行；作废凭证仍可下载追溯。上传时对文件内容计算 **SHA-256**
+  摘要（64 位十六进制，同内容同摘要）。
+- **发运前强制绑定有效探头**：发运卡口要求车辆存在当前绑定，且探头在用、凭证 `VALID`、
+  未过有效期；未绑定/已过期/已作废一律拦截（接口与页面同一道校验，页面下拉直接禁选）。
+  发运瞬间把探头序列号、量程、校准机构、证书编号、有效期、SHA-256 逐字段**快照到批次**，
+  此后探头替换、凭证作废都与在途批次脱钩。
+- **替换保留前后关系**：车辆-探头绑定只追加；旧绑定置 `released_time` 并写
+  `replaced_by_bind_id` 指向新绑定，替换链双向可查。
+- **历史温度不回写**：每条温度留痕带 `probe_id`；替换后新测点归新探头，旧温度行原值不动
+  （温度表仍为只追加，应用层无更新路径）。
+- **关联幂等**：`POST /probes/bind` 必带 `requestId`；同一 requestId 的重复请求直接回第一次的
+  绑定结果（`replay=true`），不新增绑定行、不改替换链、不写第二条流水；requestId 换参数拒绝。
+- **下载/作废审计**：证书下载记 `last_download_time` 并写 `CERT_DOWNLOAD` 流水（响应头
+  `X-Cert-SHA256` 回带摘要），作废写 `CERT_VOID` 流水。
+
+### 表结构增量（详见 schema.sql，版本标记 `cold-chain-3`）
+
+- 新增 `t_cc_temp_probe`（探头主档）、`t_cc_probe_cert`（校准凭证，含 sha256/作废/下载记账）、
+  `t_cc_vehicle_probe`（车辆绑定，只追加，含替换链与快照）、`t_cc_probe_bind_request`
+  （requestId 幂等登记，唯一约束兜底）、序列 `seq_cc_probe_no`（探头编号 `PW+8位`）。
+- `t_cc_transport_batch` 增探头凭证快照列（probe_id/bind_id/cert_id/序列号/量程/校准机构/
+  证书编号/有效期/摘要）；`t_cc_temperature_log` 增 `probe_id`。
+
+### 接口增量（仍在 `/api/cold-chain` 下，HTTP Basic）
+
+| 动作 | 方法与路径 |
+| --- | --- |
+| 探头建档（可选随附首份凭证） | `POST /probes` |
+| 探头列表 / 详情（含校准历史） | `GET /probes` / `GET /probes/{id}` |
+| 上传新校准凭证（生成 SHA-256） | `POST /probes/certs/upload` |
+| 下载证书（写审计流水） | `GET /probes/certs/{certId}/download` |
+| 作废凭证（不删原文） | `POST /probes/certs/void` |
+| 车载探头校准凭证关联（requestId 幂等） | `POST /probes/bind` |
+| 车辆当前绑定 / 替换历史 | `GET /probes/vehicles/{vehicleId}/current` / `.../history` |
+| 管理页面 | `GET /ui/cold-chain/probes`（HTTP Basic） |
+
+示例（建档→上传证书→幂等关联）：
+
+```bash
+curl -u dispatcher:dispatcher123 -H 'Content-Type: application/json' \
+  -X POST http://localhost:8080/api/cold-chain/probes \
+  -d '{"serialNo":"SN-T-0001","model":"TP-200","rangeMin":-40,"rangeMax":60,
+       "calibrateOrg":"华东计量院","validUntil":"2027-09-30T00:00:00",
+       "certNo":"CAL-2026-0001","calibrateDate":"2026-09-29T10:00:00",
+       "certFileName":"CAL-2026-0001.txt","certFileContent":"校准证书原文内容"}'
+
+curl -u dispatcher:dispatcher123 -H 'Content-Type: application/json' \
+  -X POST http://localhost:8080/api/cold-chain/probes/bind \
+  -d '{"requestId":"b3f1-uuid","vehicleId":1,"probeId":1}'
+# 再用完全相同的 requestId 请求一次：replay=true，bind.id 不变，绑定表不产生第二条结果
+```
+
+### V3 验收
+
+`ProbeCalibrationIntegrationTest` 以真实 HTTP 入口驱动并用 Mapper 直查物理表：
+冷链药品运输先提交有效样本（建档→订单→派车），再两次重复请求“车载探头校准凭证关联”，
+断言两次返回同一条绑定且物理表只有一行绑定/一行幂等登记/一条绑定流水；
+覆盖发运前未绑定/证书过期/证书作废拦截、绑定过期设备拦截、替换链前后关系、
+在途批次历史温度不回写（新批次归新探头）、SHA-256 摘要确定性、下载/作废逐次留痕、
+同 requestId 换参数拒绝，以及管理页面过期探头禁选与待发运批次拦截提示。

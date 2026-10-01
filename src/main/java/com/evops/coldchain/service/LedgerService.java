@@ -51,6 +51,8 @@ public class LedgerService {
     @Resource
     private ExceptionEvidenceMapper evidenceMapper;
     @Resource
+    private com.evops.coldchain.mapper.ProbeCertMapper probeCertMapper;
+    @Resource
     private TransportBatchService batchService;
     @Resource
     private RouteService routeService;
@@ -109,6 +111,23 @@ public class LedgerService {
         versionCheck.put("drugCurrentVersion", drug == null ? null : drug.getCurrentVersion());
         versionCheck.put("checkByFrozenVersion", true);
         ledger.put("versionCheck", versionCheck);
+        // 车载探头校准凭证快照（发运时固化；途中替换探头/作废凭证均不改变本批次）
+        if (batch.getProbeId() != null) {
+            Map<String, Object> probeInfo = new LinkedHashMap<>();
+            probeInfo.put("probeId", batch.getProbeId());
+            probeInfo.put("bindId", batch.getProbeBindId());
+            probeInfo.put("certId", batch.getProbeCertId());
+            probeInfo.put("serialNo", batch.getProbeSerialNoSnap());
+            probeInfo.put("rangeMin", batch.getProbeRangeMinSnap());
+            probeInfo.put("rangeMax", batch.getProbeRangeMaxSnap());
+            probeInfo.put("calibrateOrg", batch.getProbeCalibrateOrgSnap());
+            probeInfo.put("certNo", batch.getProbeCertNoSnap());
+            probeInfo.put("validUntil", batch.getProbeValidUntilSnap());
+            probeInfo.put("sha256", batch.getProbeSha256Snap());
+            probeInfo.put("certAtShip", batch.getProbeCertId() == null
+                    ? null : probeCertMapper.selectById(batch.getProbeCertId()));
+            ledger.put("probe", probeInfo);
+        }
         ledger.put("temperatures", temps);
         ledger.put("exceptions", exceptionList);
         ledger.put("opLogs", opLogs);

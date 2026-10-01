@@ -55,6 +55,13 @@ public final class CcConstants {
     public static final String ENT_TEMPERATURE = "TEMPERATURE";
     public static final String ENT_EXCEPTION = "EXCEPTION";
     public static final String ENT_ROUTE = "ROUTE";
+    // 车载温度探头 / 校准凭证
+    public static final String ENT_PROBE = "PROBE";
+    public static final String ENT_CERT = "CERT";
+
+    // 校准凭证状态（VALID 有效 / VOID 作废；只追加 void* 字段，不删除原行）
+    public static final String CERT_VALID = "VALID";
+    public static final String CERT_VOID = "VOID";
 
     // 操作动作
     public static final String ACT_CREATE = "CREATE";
@@ -72,4 +79,11 @@ public final class CcConstants {
     public static final String ACT_ROUTE_PUBLISH = "ROUTE_PUBLISH";
     public static final String ACT_ROUTE_WITHDRAW = "ROUTE_WITHDRAW";
     public static final String ACT_ROUTE_DIFF = "ROUTE_DIFF";
+    // 车载探头：建档 / 证书上传 / 证书下载 / 证书作废 / 凭证关联（绑定/替换）
+    public static final String ACT_PROBE_CREATE = "PROBE_CREATE";
+    public static final String ACT_CERT_UPLOAD = "CERT_UPLOAD";
+    public static final String ACT_CERT_DOWNLOAD = "CERT_DOWNLOAD";
+    public static final String ACT_CERT_VOID = "CERT_VOID";
+    public static final String ACT_PROBE_BIND = "PROBE_BIND";
+    public static final String ACT_PROBE_REPLACE = "PROBE_REPLACE";
 }

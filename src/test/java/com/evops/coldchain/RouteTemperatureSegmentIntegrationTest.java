@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.evops.coldchain.dto.DispatchRequest;
 import com.evops.coldchain.dto.DrugCreateRequest;
 import com.evops.coldchain.dto.OrderCreateRequest;
+import com.evops.coldchain.dto.ProbeBindRequest;
+import com.evops.coldchain.dto.ProbeCreateRequest;
 import com.evops.coldchain.dto.VehicleCreateRequest;
 import com.evops.coldchain.entity.Drug;
 import com.evops.coldchain.entity.RouteSegment;
@@ -18,6 +20,7 @@ import com.evops.coldchain.mapper.RouteSegmentSnapMapper;
 import com.evops.coldchain.mapper.RouteVersionMapper;
 import com.evops.coldchain.mapper.TemperatureLogMapper;
 import com.evops.coldchain.service.OrderService;
+import com.evops.coldchain.service.ProbeService;
 import com.evops.coldchain.service.RouteService;
 import com.evops.coldchain.service.SeasonResolver;
 import com.evops.coldchain.service.TransportBatchService;
@@ -97,6 +100,8 @@ class RouteTemperatureSegmentIntegrationTest {
     private RouteService routeService;
     @Autowired
     private TransportBatchService batchService;
+    @Autowired
+    private ProbeService probeService;
 
     // ====================================================================
     // 1) 配置入口 -> 发布 -> 派车 -> 分段温度/缓冲，全链路追到分段与快照落库
@@ -542,8 +547,34 @@ class RouteTemperatureSegmentIntegrationTest {
             vr.setPlateNo("验A·冷" + System.nanoTime() % 100000);
             vr.setCarrierName("验收物流");
             vehicleId = vehicleService.create(vr).getId();
+            // 发运卡口：车辆必须先绑定持有效校准凭证的探头
+            bindValidProbe(vehicleId, "req-route-global-" + System.nanoTime(),
+                    LocalDateTime.now().plusYears(1));
         }
         return vehicleId;
+    }
+
+    /** 建档一支持证探头并关联到车辆（有效期由调用方指定，便于构造过期场景） */
+    private Long bindValidProbe(Long vehicleId, String requestId, LocalDateTime validUntil) {
+        ProbeCreateRequest pc = new ProbeCreateRequest();
+        pc.setSerialNo("SN-ROUTE-" + System.nanoTime());
+        pc.setModel("TP-100");
+        pc.setRangeMin(new BigDecimal("-40.00"));
+        pc.setRangeMax(new BigDecimal("60.00"));
+        pc.setCalibrateOrg("华东计量院");
+        pc.setValidUntil(validUntil);
+        pc.setCertNo("CERT-" + System.nanoTime());
+        pc.setCalibrateDate(LocalDateTime.now().minusDays(1));
+        pc.setCertFileName("cert-" + System.nanoTime() + ".txt");
+        pc.setCertFileContent("calibration certificate body " + System.nanoTime());
+        long probeId = probeService.createProbe(pc).getId();
+
+        ProbeBindRequest pb = new ProbeBindRequest();
+        pb.setRequestId(requestId);
+        pb.setVehicleId(vehicleId);
+        pb.setProbeId(probeId);
+        probeService.bindIdempotent(pb);
+        return probeId;
     }
 
     private Long prepareOrder() {

@@ -43,6 +43,18 @@ public class TransportBatch extends BaseEntity {
     private String routeSeason;
     private Integer routeVersionNo;
 
+    // —— 车载温度探头校准凭证快照（发运时逐字段固化；替换探头/作废凭证不影响在途批次）——
+    private Long probeId;
+    private Long probeBindId;
+    private Long probeCertId;
+    private String probeSerialNoSnap;
+    private BigDecimal probeRangeMinSnap;
+    private BigDecimal probeRangeMaxSnap;
+    private String probeCalibrateOrgSnap;
+    private String probeCertNoSnap;
+    private LocalDateTime probeValidUntilSnap;
+    private String probeSha256Snap;
+
     public String getBatchNo() { return batchNo; }
     public void setBatchNo(String batchNo) { this.batchNo = batchNo; }
     public Long getOrderId() { return orderId; }
@@ -87,4 +99,24 @@ public class TransportBatch extends BaseEntity {
     public void setRouteSeason(String routeSeason) { this.routeSeason = routeSeason; }
     public Integer getRouteVersionNo() { return routeVersionNo; }
     public void setRouteVersionNo(Integer routeVersionNo) { this.routeVersionNo = routeVersionNo; }
+    public Long getProbeId() { return probeId; }
+    public void setProbeId(Long probeId) { this.probeId = probeId; }
+    public Long getProbeBindId() { return probeBindId; }
+    public void setProbeBindId(Long probeBindId) { this.probeBindId = probeBindId; }
+    public Long getProbeCertId() { return probeCertId; }
+    public void setProbeCertId(Long probeCertId) { this.probeCertId = probeCertId; }
+    public String getProbeSerialNoSnap() { return probeSerialNoSnap; }
+    public void setProbeSerialNoSnap(String probeSerialNoSnap) { this.probeSerialNoSnap = probeSerialNoSnap; }
+    public BigDecimal getProbeRangeMinSnap() { return probeRangeMinSnap; }
+    public void setProbeRangeMinSnap(BigDecimal probeRangeMinSnap) { this.probeRangeMinSnap = probeRangeMinSnap; }
+    public BigDecimal getProbeRangeMaxSnap() { return probeRangeMaxSnap; }
+    public void setProbeRangeMaxSnap(BigDecimal probeRangeMaxSnap) { this.probeRangeMaxSnap = probeRangeMaxSnap; }
+    public String getProbeCalibrateOrgSnap() { return probeCalibrateOrgSnap; }
+    public void setProbeCalibrateOrgSnap(String probeCalibrateOrgSnap) { this.probeCalibrateOrgSnap = probeCalibrateOrgSnap; }
+    public String getProbeCertNoSnap() { return probeCertNoSnap; }
+    public void setProbeCertNoSnap(String probeCertNoSnap) { this.probeCertNoSnap = probeCertNoSnap; }
+    public LocalDateTime getProbeValidUntilSnap() { return probeValidUntilSnap; }
+    public void setProbeValidUntilSnap(LocalDateTime probeValidUntilSnap) { this.probeValidUntilSnap = probeValidUntilSnap; }
+    public String getProbeSha256Snap() { return probeSha256Snap; }
+    public void setProbeSha256Snap(String probeSha256Snap) { this.probeSha256Snap = probeSha256Snap; }
 }

@@ -6,6 +6,8 @@ import com.evops.coldchain.dto.DrugCreateRequest;
 import com.evops.coldchain.dto.EvidenceAppendRequest;
 import com.evops.coldchain.dto.ExceptionMarkRequest;
 import com.evops.coldchain.dto.OrderCreateRequest;
+import com.evops.coldchain.dto.ProbeBindRequest;
+import com.evops.coldchain.dto.ProbeCreateRequest;
 import com.evops.coldchain.dto.RevokeRequest;
 import com.evops.coldchain.dto.SignRequest;
 import com.evops.coldchain.dto.TempReportRequest;
@@ -24,6 +26,7 @@ import com.evops.coldchain.mapper.TransportBatchMapper;
 import com.evops.coldchain.service.DrugService;
 import com.evops.coldchain.service.OpLogService;
 import com.evops.coldchain.service.OrderService;
+import com.evops.coldchain.service.ProbeService;
 import com.evops.coldchain.service.TransportBatchService;
 import com.evops.coldchain.service.VehicleService;
 import com.evops.common.BusinessException;
@@ -62,6 +65,7 @@ class ColdChainFlowIntegrationTest {
     @Autowired private VehicleService vehicleService;
     @Autowired private OrderService orderService;
     @Autowired private TransportBatchService batchService;
+    @Autowired private ProbeService probeService;
     @Autowired private OpLogService opLogService;
     @Autowired private TransportBatchMapper batchMapper;
     @Autowired private ExceptionEventMapper exceptionMapper;
@@ -136,15 +140,31 @@ class ColdChainFlowIntegrationTest {
         assertNotNull(batch.getCreateBy());
         assertNotNull(batch.getCreateTime());
 
-        // ---------- 6. 发运 ----------
+        // ---------- 6. 发运：未绑定车载探头必须拦截；绑定持有效凭证的探头后才放行 ----------
+        final Long firstBatchId = batch.getId();
+        BusinessException noProbe = assertThrows(BusinessException.class,
+                () -> batchService.ship(firstBatchId));
+        assertTrue(noProbe.getMessage().contains("尚未绑定车载温度探头"));
+
+        Long probeId = bindValidProbe(vehicle.getId(), "req-v1-flow-1", "SN-V1-0001",
+                T0.plusYears(1));
         batch = batchService.ship(batch.getId());
         assertEquals(CcConstants.BATCH_SHIPPED, batch.getStatus());
         assertNotNull(batch.getShipTime());
+        // 发运瞬间逐字段固化校准凭证快照
+        assertEquals(probeId, batch.getProbeId());
+        assertEquals("SN-V1-0001", batch.getProbeSerialNoSnap());
+        assertEquals("华东计量院", batch.getProbeCalibrateOrgSnap());
+        assertNotNull(batch.getProbeCertNoSnap());
+        assertNotNull(batch.getProbeSha256Snap());
+        assertEquals(64, batch.getProbeSha256Snap().length());
+        assertEquals(0, T0.plusYears(1).compareTo(batch.getProbeValidUntilSnap()));
 
         // ---------- 7. 温度留痕：正常点 + 越限点（越限自动追加异常） ----------
         TempReportRequest okTemp = tempReq(batch.getId(), T0.plusHours(1), new BigDecimal("5.20"));
         TemperatureLog okLog = batchService.reportTemperature(okTemp);
         assertTrue(okLog.getInRange());
+        assertEquals(probeId, okLog.getProbeId(), "温度测点应归属发运时固化的探头");
 
         TempReportRequest badTemp = tempReq(batch.getId(), T0.plusHours(3), new BigDecimal("11.50"));
         TemperatureLog badLog = batchService.reportTemperature(badTemp);
@@ -257,6 +277,7 @@ class ColdChainFlowIntegrationTest {
         dispatch2.setOrderId(order2.getId());
         dispatch2.setVehicleId(vehicle.getId());
         TransportBatch batch2 = batchService.dispatch(dispatch2);
+        bindValidProbe(vehicle.getId(), "req-v1-flow-2", "SN-V1-0002", T0.plusYears(1));
         batchService.ship(batch2.getId());
         batchService.reportTemperature(tempReq(batch2.getId(), T0.plusHours(1), new BigDecimal("6.00")));
 
@@ -285,8 +306,31 @@ class ColdChainFlowIntegrationTest {
                 () -> batchService.reportTemperature(tempReq(batch2.getId(), T0.plusHours(2), new BigDecimal("5.00"))));
     }
 
-    private ExceptionEvidence appendEvidence(Long exceptionId, String fileName, String fileUrl, String note) {
-        EvidenceAppendRequest req = new EvidenceAppendRequest();
+    /** 建档一支持证探头并关联到车辆，返回探头ID */
+    private Long bindValidProbe(Long vehicleId, String requestId, String serialNo,
+                                LocalDateTime validUntil) {
+        ProbeCreateRequest pc = new ProbeCreateRequest();
+        pc.setSerialNo(serialNo);
+        pc.setModel("TP-100");
+        pc.setRangeMin(new BigDecimal("-40.00"));
+        pc.setRangeMax(new BigDecimal("60.00"));
+        pc.setCalibrateOrg("华东计量院");
+        pc.setValidUntil(validUntil);
+        pc.setCertNo("CERT-" + serialNo);
+        pc.setCalibrateDate(T0.minusDays(1));
+        pc.setCertFileName(serialNo + ".txt");
+        pc.setCertFileContent("calibration certificate of " + serialNo);
+        Long probeId = probeService.createProbe(pc).getId();
+
+        ProbeBindRequest pb = new ProbeBindRequest();
+        pb.setRequestId(requestId);
+        pb.setVehicleId(vehicleId);
+        pb.setProbeId(probeId);
+        probeService.bindIdempotent(pb);
+        return probeId;
+    }
+
+    private ExceptionEvidence appendEvidence(Long exceptionId, String fileName, String fileUrl, String note) {        EvidenceAppendRequest req = new EvidenceAppendRequest();
         req.setExceptionId(exceptionId);
         req.setFileName(fileName);
         req.setFileUrl(fileUrl);

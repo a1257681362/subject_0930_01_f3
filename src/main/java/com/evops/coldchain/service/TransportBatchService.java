@@ -17,6 +17,7 @@ import com.evops.coldchain.entity.ShipmentOrder;
 import com.evops.coldchain.entity.TemperatureLog;
 import com.evops.coldchain.entity.TransportBatch;
 import com.evops.coldchain.entity.Vehicle;
+import com.evops.coldchain.entity.VehicleProbe;
 import com.evops.coldchain.mapper.ExceptionEventMapper;
 import com.evops.coldchain.mapper.ExceptionEvidenceMapper;
 import com.evops.coldchain.mapper.SequenceMapper;
@@ -66,6 +67,8 @@ public class TransportBatchService {
     private DrugService drugService;
     @Resource
     private RouteService routeService;
+    @Resource
+    private ProbeService probeService;
     @Resource
     private OpLogService opLogService;
 
@@ -130,6 +133,9 @@ public class TransportBatchService {
             throw new BusinessException("仅已派车批次允许发运，当前状态: " + batch.getStatus());
         }
 
+        // 发运前卡口：车辆必须绑定仍在有效期内的持证探头（接口与页面共用这一道校验）
+        VehicleProbe probeBinding = probeService.requireValidBindingForShip(batch.getVehicleId());
+
         int snapCount = 0;
         RouteVersion routeVersion = null;
         if (batch.getRouteId() != null) {
@@ -143,6 +149,18 @@ public class TransportBatchService {
             }
         }
 
+        // 车载探头校准凭证逐字段快照：发运后探头替换/证书作废均不影响在途批次与温度归属
+        batch.setProbeId(probeBinding.getProbeId());
+        batch.setProbeBindId(probeBinding.getId());
+        batch.setProbeCertId(probeBinding.getCertId());
+        batch.setProbeSerialNoSnap(probeBinding.getSerialNoSnap());
+        batch.setProbeRangeMinSnap(probeBinding.getRangeMinSnap());
+        batch.setProbeRangeMaxSnap(probeBinding.getRangeMaxSnap());
+        batch.setProbeCalibrateOrgSnap(probeBinding.getCalibrateOrgSnap());
+        batch.setProbeCertNoSnap(probeBinding.getCertNoSnap());
+        batch.setProbeValidUntilSnap(probeBinding.getValidUntilSnap());
+        batch.setProbeSha256Snap(probeBinding.getSha256Snap());
+
         batch.setStatus(CcConstants.BATCH_SHIPPED);
         batch.setShipTime(LocalDateTime.now());
         batchMapper.updateById(batch);
@@ -153,6 +171,11 @@ public class TransportBatchService {
 
         opLogService.log(CcConstants.ENT_BATCH, batchId, batchId, CcConstants.ACT_SHIP,
                 "批次 " + batch.getBatchNo() + " 发运在途"
+                        + String.format("；车载探头序列号=%s，量程=%s~%s℃，校准机构=%s，证书编号=%s，有效期至=%s，摘要=%s（发运时固化，途中替换不回写）",
+                                probeBinding.getSerialNoSnap(), probeBinding.getRangeMinSnap(),
+                                probeBinding.getRangeMaxSnap(), probeBinding.getCalibrateOrgSnap(),
+                                probeBinding.getCertNoSnap(), probeBinding.getValidUntilSnap(),
+                                probeBinding.getSha256Snap())
                         + (routeVersion == null ? "" : String.format(
                                 "；路线季节版本=%s V%d，逐段固化温区分段 %d 段（发运后版本变更不影响本批次）",
                                 routeVersion.getSeason(), routeVersion.getVersionNo(), snapCount)));
@@ -218,6 +241,8 @@ public class TransportBatchService {
         log.setRemark(req.getRemark());
         log.setMileageKm(req.getMileageKm());
         log.setSegmentSeq(hit == null ? null : hit.getSegmentSeq());
+        // 测点归属发运时固化的探头；该字段只随新行追加，替换探头后历史温度行永不回写
+        log.setProbeId(batch.getProbeId());
         temperatureMapper.insert(log);
 
         String scope = hit == null
@@ -226,9 +251,9 @@ public class TransportBatchService {
                         req.getMileageKm(), hit.getSegmentSeq(), hit.getFromKm(), hit.getToKm(),
                         hit.getOwnerName(), min, max, bufferMinutes);
         opLogService.log(CcConstants.ENT_TEMPERATURE, log.getId(), batch.getId(), CcConstants.ACT_TEMP_REPORT,
-                String.format("批次 %s 温度留痕：%s = %s℃（%s，%s）",
+                String.format("批次 %s 温度留痕：%s = %s℃（%s，%s；采集探头=%s）",
                         batch.getBatchNo(), req.getRecordTime(), req.getTemperature(), scope,
-                        inRange ? "正常" : "越限"));
+                        inRange ? "正常" : "越限", batch.getProbeSerialNoSnap()));
 
         if (!inRange) {
             // 缓冲判定：同段连续越限（不含正常点打断）是否已超过缓冲时长
