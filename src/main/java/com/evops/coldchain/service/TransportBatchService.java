@@ -11,6 +11,7 @@ import com.evops.coldchain.dto.TempReportRequest;
 import com.evops.coldchain.entity.DrugVersion;
 import com.evops.coldchain.entity.ExceptionEvent;
 import com.evops.coldchain.entity.ExceptionEvidence;
+import com.evops.coldchain.entity.BatchProbeBinding;
 import com.evops.coldchain.entity.RouteSegmentSnap;
 import com.evops.coldchain.entity.RouteVersion;
 import com.evops.coldchain.entity.ShipmentOrder;
@@ -67,6 +68,8 @@ public class TransportBatchService {
     @Resource
     private RouteService routeService;
     @Resource
+    private ProbeService probeService;
+    @Resource
     private OpLogService opLogService;
 
     /** 派车：生成稳定批次号，固化档案快照，关联发货单与车辆 */
@@ -122,13 +125,17 @@ public class TransportBatchService {
         return batch;
     }
 
-    /** 发运：已派车 -> 在途；发运瞬间选定路线季节生效版本并逐段固化快照 */
+    /** 发运：已派车 -> 在途；发运前必须绑定仍在有效期内的探头，发运瞬间选定路线季节生效版本并逐段固化快照 */
     @Transactional
     public TransportBatch ship(Long batchId) {
         TransportBatch batch = requireActiveBatch(batchId);
         if (!CcConstants.BATCH_DISPATCHED.equals(batch.getStatus())) {
             throw new BusinessException("仅已派车批次允许发运，当前状态: " + batch.getStatus());
         }
+
+        // 硬约束：发运前必须已通过“车载探头校准凭证关联”绑定在效探头；
+        // 绑定采信的证书此刻仍须 VALID 且未过有效期（过期/作废设备在此被拦截）。
+        BatchProbeBinding probeBinding = probeService.validateActiveBinding(batchId);
 
         int snapCount = 0;
         RouteVersion routeVersion = null;
@@ -153,6 +160,8 @@ public class TransportBatchService {
 
         opLogService.log(CcConstants.ENT_BATCH, batchId, batchId, CcConstants.ACT_SHIP,
                 "批次 " + batch.getBatchNo() + " 发运在途"
+                        + String.format("；车载探头绑定#%d（证书#%d 仍在有效期内）",
+                                probeBinding.getId(), probeBinding.getCertId())
                         + (routeVersion == null ? "" : String.format(
                                 "；路线季节版本=%s V%d，逐段固化温区分段 %d 段（发运后版本变更不影响本批次）",
                                 routeVersion.getSeason(), routeVersion.getVersionNo(), snapCount)));
@@ -179,6 +188,10 @@ public class TransportBatchService {
                 && !CcConstants.BATCH_EXCEPTION.equals(batch.getStatus())) {
             throw new BusinessException("批次当前状态不允许上报温度: " + batch.getStatus());
         }
+
+        // 在途温度必须来自当前绑定探头；其校准证书此刻仍须 VALID 且未过有效期，
+        // 否则温度上报被拦截（证书在途过期/作废即在此停点）。
+        BatchProbeBinding probeBinding = probeService.validateActiveBinding(batch.getId());
 
         List<RouteSegmentSnap> snaps = batch.getRouteVersionId() == null
                 ? java.util.Collections.emptyList()
@@ -218,6 +231,8 @@ public class TransportBatchService {
         log.setRemark(req.getRemark());
         log.setMileageKm(req.getMileageKm());
         log.setSegmentSeq(hit == null ? null : hit.getSegmentSeq());
+        // 记录实际采集探头；替换探头后新温度挂新探头，历史行保留旧探头原值，不回写
+        log.setProbeId(probeBinding.getProbeId());
         temperatureMapper.insert(log);
 
         String scope = hit == null
@@ -226,8 +241,9 @@ public class TransportBatchService {
                         req.getMileageKm(), hit.getSegmentSeq(), hit.getFromKm(), hit.getToKm(),
                         hit.getOwnerName(), min, max, bufferMinutes);
         opLogService.log(CcConstants.ENT_TEMPERATURE, log.getId(), batch.getId(), CcConstants.ACT_TEMP_REPORT,
-                String.format("批次 %s 温度留痕：%s = %s℃（%s，%s）",
-                        batch.getBatchNo(), req.getRecordTime(), req.getTemperature(), scope,
+                String.format("批次 %s 温度留痕：%s = %s℃（采集探头#%d，%s，%s）",
+                        batch.getBatchNo(), req.getRecordTime(), req.getTemperature(),
+                        probeBinding.getProbeId(), scope,
                         inRange ? "正常" : "越限"));
 
         if (!inRange) {

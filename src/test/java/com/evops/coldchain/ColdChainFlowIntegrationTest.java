@@ -6,6 +6,8 @@ import com.evops.coldchain.dto.DrugCreateRequest;
 import com.evops.coldchain.dto.EvidenceAppendRequest;
 import com.evops.coldchain.dto.ExceptionMarkRequest;
 import com.evops.coldchain.dto.OrderCreateRequest;
+import com.evops.coldchain.dto.ProbeBindRequest;
+import com.evops.coldchain.dto.ProbeCreateRequest;
 import com.evops.coldchain.dto.RevokeRequest;
 import com.evops.coldchain.dto.SignRequest;
 import com.evops.coldchain.dto.TempReportRequest;
@@ -17,6 +19,7 @@ import com.evops.coldchain.entity.ExceptionEvidence;
 import com.evops.coldchain.entity.OpLog;
 import com.evops.coldchain.entity.ShipmentOrder;
 import com.evops.coldchain.entity.TemperatureLog;
+import com.evops.coldchain.entity.TemperatureProbe;
 import com.evops.coldchain.entity.TransportBatch;
 import com.evops.coldchain.entity.Vehicle;
 import com.evops.coldchain.mapper.ExceptionEventMapper;
@@ -24,12 +27,14 @@ import com.evops.coldchain.mapper.TransportBatchMapper;
 import com.evops.coldchain.service.DrugService;
 import com.evops.coldchain.service.OpLogService;
 import com.evops.coldchain.service.OrderService;
+import com.evops.coldchain.service.ProbeService;
 import com.evops.coldchain.service.TransportBatchService;
 import com.evops.coldchain.service.VehicleService;
 import com.evops.common.BusinessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
@@ -62,6 +67,7 @@ class ColdChainFlowIntegrationTest {
     @Autowired private VehicleService vehicleService;
     @Autowired private OrderService orderService;
     @Autowired private TransportBatchService batchService;
+    @Autowired private ProbeService probeService;
     @Autowired private OpLogService opLogService;
     @Autowired private TransportBatchMapper batchMapper;
     @Autowired private ExceptionEventMapper exceptionMapper;
@@ -136,12 +142,24 @@ class ColdChainFlowIntegrationTest {
         assertNotNull(batch.getCreateBy());
         assertNotNull(batch.getCreateTime());
 
-        // ---------- 6. 发运 ----------
+        // ---------- 6. 发运前必须绑定仍在有效期内的车载探头（建档+有效证书+凭证关联） ----------
+        TemperatureProbe probe = createProbeWithCert("SN-VALID-001", T0.plusYears(1));
+        final Long dispatchedBatchId = batch.getId();
+        BusinessException noBind = assertThrows(BusinessException.class, () -> batchService.ship(dispatchedBatchId));
+        assertTrue(noBind.getMessage().contains("凭证关联"));
+
+        ProbeBindRequest bindReq = new ProbeBindRequest();
+        bindReq.setBatchId(batch.getId());
+        bindReq.setProbeId(probe.getId());
+        probeService.bindOrReplace(bindReq);
+
+        // ---------- 7. 发运 ----------
         batch = batchService.ship(batch.getId());
         assertEquals(CcConstants.BATCH_SHIPPED, batch.getStatus());
         assertNotNull(batch.getShipTime());
+        assertEquals(probe.getId(), batch.getProbeId());
 
-        // ---------- 7. 温度留痕：正常点 + 越限点（越限自动追加异常） ----------
+        // ---------- 8. 温度留痕：正常点 + 越限点（越限自动追加异常） ----------
         TempReportRequest okTemp = tempReq(batch.getId(), T0.plusHours(1), new BigDecimal("5.20"));
         TemperatureLog okLog = batchService.reportTemperature(okTemp);
         assertTrue(okLog.getInRange());
@@ -257,6 +275,8 @@ class ColdChainFlowIntegrationTest {
         dispatch2.setOrderId(order2.getId());
         dispatch2.setVehicleId(vehicle.getId());
         TransportBatch batch2 = batchService.dispatch(dispatch2);
+        TemperatureProbe probe2 = createProbeWithCert("SN-VALID-002", T0.plusYears(1));
+        bindProbe(batch2.getId(), probe2.getId());
         batchService.ship(batch2.getId());
         batchService.reportTemperature(tempReq(batch2.getId(), T0.plusHours(1), new BigDecimal("6.00")));
 
@@ -292,6 +312,32 @@ class ColdChainFlowIntegrationTest {
         req.setFileUrl(fileUrl);
         req.setNote(note);
         return batchService.appendEvidence(req);
+    }
+
+    /** 建档一个在效探头并上传有效期至 validUntil 的校准证书，返回探头 */
+    private TemperatureProbe createProbeWithCert(String serialNo, LocalDateTime validUntil) {
+        ProbeCreateRequest pc = new ProbeCreateRequest();
+        pc.setSerialNo(serialNo);
+        pc.setModel("TP-TEST");
+        pc.setMeasureMin(new BigDecimal("-40.00"));
+        pc.setMeasureMax(new BigDecimal("80.00"));
+        pc.setCalibOrg("测试计量院");
+        pc.setValidUntil(validUntil);
+        TemperatureProbe probe = probeService.createProbe(pc);
+
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "calib-" + serialNo + ".pdf", "application/pdf",
+                ("fake-cert-content-" + serialNo).getBytes());
+        probeService.uploadCertificate(probe.getId(), file, "CERT-" + serialNo,
+                validUntil.minusYears(1), validUntil);
+        return probe;
+    }
+
+    private void bindProbe(Long batchId, Long probeId) {
+        ProbeBindRequest bind = new ProbeBindRequest();
+        bind.setBatchId(batchId);
+        bind.setProbeId(probeId);
+        probeService.bindOrReplace(bind);
     }
 
     private TempReportRequest tempReq(Long batchId, LocalDateTime time, BigDecimal temp) {

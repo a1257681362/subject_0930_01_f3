@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>车载温度探头校准凭证管理</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: "Microsoft YaHei", Arial, sans-serif; margin: 0; background: #f4f6f9; color: #222; }
+        header { background: #1f3a5f; color: #fff; padding: 14px 24px; }
+        header h1 { margin: 0; font-size: 18px; }
+        header .sub { font-size: 12px; opacity: .8; margin-top: 4px; }
+        main { max-width: 1180px; margin: 18px auto; padding: 0 16px; }
+        .card { background: #fff; border: 1px solid #e2e6ec; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+        .card h2 { margin: 0 0 12px; font-size: 15px; border-left: 4px solid #2b6cb0; padding-left: 8px; }
+        label { display: block; font-size: 12px; color: #555; margin: 8px 0 3px; }
+        input, select { padding: 6px 8px; border: 1px solid #cbd2dc; border-radius: 4px; font-size: 13px; width: 100%; }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 10px; align-items: end; }
+        .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: end; }
+        button { background: #2b6cb0; color: #fff; border: 0; border-radius: 4px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
+        button.secondary { background: #6b7c93; }
+        button.danger { background: #c0392b; }
+        button:disabled { background: #b8c2cf; cursor: not-allowed; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { border-bottom: 1px solid #e7ebf0; padding: 8px 10px; text-align: left; vertical-align: top; }
+        th { background: #f0f3f7; color: #445; font-weight: 600; }
+        tr.expired { background: #fdecea; }
+        tr.expired td { color: #922; }
+        .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; }
+        .tag.ok { background: #e2f5e9; color: #1d7a42; border: 1px solid #b6e3c6; }
+        .tag.bad { background: #fdecea; color: #a0261c; border: 1px solid #f3c1bb; }
+        .tag.void { background: #eceff3; color: #5a6572; border: 1px solid #d3d9e1; }
+        .muted { color: #8893a2; font-size: 12px; }
+        .msg { margin-top: 10px; font-size: 13px; padding: 8px 12px; border-radius: 4px; display: none; }
+        .msg.ok { display: block; background: #e8f6ee; color: #1d7a42; border: 1px solid #bfe6cf; }
+        .msg.err { display: block; background: #fdecea; color: #a0261c; border: 1px solid #f3c1bb; }
+        .digest { font-family: monospace; font-size: 11px; color: #556; word-break: break-all; }
+        .chain { font-size: 12px; color: #445; }
+        .chain .old { color: #8893a2; text-decoration: line-through; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>车载温度探头校准凭证管理</h1>
+    <div class="sub">建档登记序列号 / 量程 / 校准机构 / 有效期；发运前必须关联仍在有效期内的探头。过期、已作废、无有效证书的设备在页面与接口双侧拦截。</div>
+</header>
+<main>
+    <!-- 凭证关联（发运前必做） -->
+    <section class="card">
+        <h2>车载探头校准凭证关联（发运前必做，重复提交幂等）</h2>
+        <div class="grid3">
+            <div>
+                <label>运输批次 ID</label>
+                <input id="bindBatchId" type="number" placeholder="如 12"/>
+            </div>
+            <div>
+                <label>选择探头（过期/作废设备已禁选并标红）</label>
+                <select id="bindProbeId"></select>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button onclick="doBind()">关联 / 替换</button>
+                <button class="secondary" onclick="loadChain()">查看绑定链条</button>
+            </div>
+        </div>
+        <div style="margin-top:8px;">
+            <label>替换/解绑原因（替换探头时填写）</label>
+            <input id="bindReason" placeholder="如：原车探头故障，更换备用探头"/>
+        </div>
+        <div class="chain" id="chainBox" style="margin-top:10px;"></div>
+        <div class="msg" id="bindMsg"></div>
+    </section>
+
+    <!-- 探头建档 -->
+    <section class="card">
+        <h2>探头建档</h2>
+        <div class="grid">
+            <div><label>序列号 *</label><input id="pSerial" placeholder="出厂序列号，全局唯一"/></div>
+            <div><label>型号</label><input id="pModel" placeholder="如 TP-208"/></div>
+            <div><label>量程下限 ℃ *</label><input id="pMin" type="number" step="0.01" placeholder="-40"/></div>
+            <div><label>量程上限 ℃ *</label><input id="pMax" type="number" step="0.01" placeholder="80"/></div>
+            <div></div>
+            <div><label>校准机构 *</label><input id="pOrg" placeholder="如 省计量科学研究院"/></div>
+            <div><label>校准有效期至 *</label><input id="pUntil" type="datetime-local"/></div>
+            <div><label>备注</label><input id="pRemark"/></div>
+            <div></div>
+            <div style="text-align:right;"><button onclick="createProbe()">建档登记</button></div>
+        </div>
+        <div class="msg" id="probeMsg"></div>
+    </section>
+
+    <!-- 探头列表 -->
+    <section class="card">
+        <h2>探头台账（红底＝当前不可用于发运）</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>编号</th><th>序列号</th><th>型号</th><th>量程(℃)</th><th>校准机构</th>
+                <th>有效期至</th><th>状态</th><th>操作</th>
+            </tr>
+            </thead>
+            <tbody id="probeRows"></tbody>
+        </table>
+    </section>
+
+    <!-- 证书列表 -->
+    <section class="card">
+        <h2 id="certTitle">校准证书（点击上方探头的“证书”查看）</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>证书#</th><th>文件</th><th>证书号</th><th>有效期</th><th>大小</th>
+                <th>SHA-256 摘要</th><th>状态</th><th>操作</th>
+            </tr>
+            </thead>
+            <tbody id="certRows">
+            <tr><td colspan="8" class="muted">请先在探头台账中选择“证书”。</td></tr>
+            </tbody>
+        </table>
+
+        <h2 style="margin-top:18px;">上传新校准证书（上传后生成 SHA-256 摘要）</h2>
+        <div class="grid3">
+            <div><label>证书文件 *</label><input id="certFile" type="file"/></div>
+            <div><label>证书编号</label><input id="certNo" placeholder="校准机构出具的证书号"/></div>
+            <div></div>
+            <div><label>校准日期</label><input id="certFrom" type="datetime-local"/></div>
+            <div><label>有效期至 *</label><input id="certUntil" type="datetime-local"/></div>
+            <div style="text-align:right;"><button onclick="uploadCert()">上传证书</button></div>
+        </div>
+        <div class="msg" id="certMsg"></div>
+    </section>
+</main>
+
+<script th:inline="javascript">
+    const API = '/api/cold-chain/probes';
+    let probes = [];
+    let currentProbeId = null;
+
+    function show(el, ok, text) {
+        el.className = 'msg ' + (ok ? 'ok' : 'err');
+        el.textContent = text;
+    }
+    function fmt(t) { return t ? t.replace('T', ' ').slice(0, 16) : ''; }
+
+    async function api(method, url, body) {
+        const opt = { method, headers: {} };
+        if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+        const r = await fetch(url, opt);
+        return r.json();
+    }
+
+    async function loadProbes() {
+        const r = await api('GET', API);
+        probes = r.data || [];
+        const rows = document.getElementById('probeRows');
+        const sel = document.getElementById('bindProbeId');
+        rows.innerHTML = '';
+        sel.innerHTML = '';
+        probes.forEach(v => {
+            const p = v.probe, cert = v.currentCertificate, usable = v.usable;
+            // 列表行
+            const tr = document.createElement('tr');
+            if (!usable) tr.className = 'expired';
+            tr.innerHTML =
+                '<td>' + p.probeNo + '</td>' +
+                '<td>' + p.serialNo + '</td>' +
+                '<td>' + (p.model || '') + '</td>' +
+                '<td>' + p.measureMin + ' ~ ' + p.measureMax + '</td>' +
+                '<td>' + p.calibOrg + '</td>' +
+                '<td>' + fmt(p.validUntil) + '</td>' +
+                '<td>' + (usable
+                    ? '<span class="tag ok">在效可用</span>'
+                    : (p.status === 'REVOKED' ? '<span class="tag bad">已停用</span>'
+                        : (cert == null ? '<span class="tag bad">无有效证书</span>' : '<span class="tag bad">已过期</span>'))) + '</td>' +
+                '<td><button class="secondary" onclick="loadCerts(' + p.id + ')">证书</button></td>';
+            rows.appendChild(tr);
+
+            // 关联下拉：过期/作废设备禁用（接口侧也会硬拦截）
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.probeNo + ' / ' + p.serialNo + (usable ? '' : '（不可用：证书过期或缺失）');
+            if (!usable) opt.disabled = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    async function createProbe() {
+        const msg = document.getElementById('probeMsg');
+        const body = {
+            serialNo: pSerial.value.trim(), model: pModel.value.trim(),
+            measureMin: pMin.value, measureMax: pMax.value,
+            calibOrg: pOrg.value.trim(), validUntil: pUntil.value,
+            remark: pRemark.value.trim()
+        };
+        if (!body.serialNo || !body.measureMin || !body.measureMax || !body.calibOrg || !body.validUntil) {
+            show(msg, false, '请填写全部必填项（序列号、量程、校准机构、有效期）'); return;
+        }
+        const r = await api('POST', API, body);
+        if (r.success) { show(msg, true, '建档成功：' + r.data.probeNo + '，请上传校准证书后再用于发运关联。'); loadProbes(); }
+        else show(msg, false, r.message);
+    }
+
+    async function loadCerts(probeId) {
+        currentProbeId = probeId;
+        const r = await api('GET', API + '/' + probeId);
+        if (!r.success) return;
+        const p = r.data.probe, certs = r.data.certificates || [];
+        document.getElementById('certTitle').textContent =
+            '校准证书 — 探头 ' + p.probeNo + '（序列号 ' + p.serialNo + '）';
+        const rows = document.getElementById('certRows');
+        rows.innerHTML = '';
+        if (!certs.length) {
+            rows.innerHTML = '<tr><td colspan="8" class="muted">该探头尚无证书，请在下方上传仍在有效期内的校准证书。</td></tr>';
+        }
+        certs.forEach(c => {
+            const tr = document.createElement('tr');
+            if (c.status === 'VOID') tr.style.color = '#8893a2';
+            tr.innerHTML =
+                '<td>#' + c.id + '</td>' +
+                '<td>' + c.fileName + '</td>' +
+                '<td>' + (c.certNo || '') + '</td>' +
+                '<td>' + fmt(c.validFrom) + ' ~ ' + fmt(c.validUntil) + '</td>' +
+                '<td>' + c.fileSize + ' B</td>' +
+                '<td class="digest">' + c.sha256 + '</td>' +
+                '<td>' + (c.status === 'VALID'
+                    ? '<span class="tag ok">有效</span>'
+                    : '<span class="tag void">已作废：' + (c.voidReason || '') + '</span>') + '</td>' +
+                '<td>' +
+                  '<a href="' + API + '/certificates/' + c.id + '/download"><button class="secondary" type="button">下载</button></a> ' +
+                  (c.status === 'VALID' ? '<button class="danger" onclick="voidCert(' + c.id + ')">作废</button>' : '') +
+                '</td>';
+            rows.appendChild(tr);
+        });
+    }
+
+    async function uploadCert() {
+        const msg = document.getElementById('certMsg');
+        if (!currentProbeId) { show(msg, false, '请先选择一个探头。'); return; }
+        const f = document.getElementById('certFile').files[0];
+        if (!f) { show(msg, false, '请选择证书文件。'); return; }
+        if (!certUntil.value) { show(msg, false, '请填写证书有效期。'); return; }
+        const fd = new FormData();
+        fd.append('file', f);
+        if (certNo.value) fd.append('certNo', certNo.value);
+        if (certFrom.value) fd.append('validFrom', certFrom.value);
+        fd.append('validUntil', certUntil.value);
+        const r = await fetch(API + '/' + currentProbeId + '/certificates', { method: 'POST', body: fd }).then(x => x.json());
+        if (r.success) {
+            show(msg, true, '证书已上传，SHA-256 摘要：' + r.data.sha256);
+            loadProbes(); loadCerts(currentProbeId);
+        } else show(msg, false, r.message);
+    }
+
+    async function voidCert(certId) {
+        const reason = prompt('请输入证书作废原因（操作将写入审计流水，不可删除文件）：');
+        if (reason === null) return;
+        if (!reason.trim()) { alert('作废原因不能为空。'); return; }
+        const r = await api('POST', API + '/certificates/' + certId + '/void', { reason: reason.trim() });
+        const msg = document.getElementById('certMsg');
+        if (r.success) { show(msg, true, '证书已作废（仅置 VOID，文件保留）。'); loadProbes(); loadCerts(currentProbeId); }
+        else show(msg, false, r.message);
+    }
+
+    async function doBind() {
+        const msg = document.getElementById('bindMsg');
+        const batchId = bindBatchId.value.trim();
+        const probeId = bindProbeId.value;
+        if (!batchId || !probeId) { show(msg, false, '请填写批次并选择探头。'); return; }
+        const r = await api('POST', API + '/bindings',
+            { batchId: Number(batchId), probeId: Number(probeId), reason: bindReason.value.trim() || null });
+        if (r.success) {
+            show(msg, true, '关联成功（绑定#' + r.data.id + '，状态 ' + r.data.status + '）。重复提交不会产生第二条结果。');
+            loadChain();
+        } else show(msg, false, r.message);
+    }
+
+    async function loadChain() {
+        const batchId = bindBatchId.value.trim();
+        const box = document.getElementById('chainBox');
+        if (!batchId) { box.textContent = ''; return; }
+        const r = await api('GET', API + '/bindings?batchId=' + batchId);
+        if (!r.success) { box.textContent = r.message; return; }
+        const list = r.data || [];
+        if (!list.length) { box.textContent = '该批次尚无探头绑定（发运将被拦截）。'; return; }
+        box.innerHTML = list.map(b => {
+            const label = '绑定#' + b.id + ' 探头#' + b.probeId + ' 采信证书#' + b.certId
+                + ' 绑定于 ' + fmt(b.bindTime);
+            if (b.status === 'ACTIVE') return '▶ <b>' + label + '</b> [ACTIVE]';
+            return '<span class="old">↳ ' + label + ' [' + b.status
+                + (b.reason ? '：' + b.reason : '') + ']</span>';
+        }).join('<br/>');
+    }
+
+    loadProbes();
+</script>
+</body>
+</html>

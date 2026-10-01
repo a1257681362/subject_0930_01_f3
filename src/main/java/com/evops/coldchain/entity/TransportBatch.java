@@ -43,6 +43,9 @@ public class TransportBatch extends BaseEntity {
     private String routeSeason;
     private Integer routeVersionNo;
 
+    // —— 当前车载温度探头（发运前必须绑定在效探头；替换链条与历史采信以 t_cc_batch_probe_binding 为准）——
+    private Long probeId;
+
     public String getBatchNo() { return batchNo; }
     public void setBatchNo(String batchNo) { this.batchNo = batchNo; }
     public Long getOrderId() { return orderId; }
@@ -87,4 +90,6 @@ public class TransportBatch extends BaseEntity {
     public void setRouteSeason(String routeSeason) { this.routeSeason = routeSeason; }
     public Integer getRouteVersionNo() { return routeVersionNo; }
     public void setRouteVersionNo(Integer routeVersionNo) { this.routeVersionNo = routeVersionNo; }
+    public Long getProbeId() { return probeId; }
+    public void setProbeId(Long probeId) { this.probeId = probeId; }
 }

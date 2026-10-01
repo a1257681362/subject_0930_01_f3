@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.evops.coldchain.dto.DispatchRequest;
 import com.evops.coldchain.dto.DrugCreateRequest;
 import com.evops.coldchain.dto.OrderCreateRequest;
+import com.evops.coldchain.dto.ProbeBindRequest;
+import com.evops.coldchain.dto.ProbeCreateRequest;
 import com.evops.coldchain.dto.VehicleCreateRequest;
 import com.evops.coldchain.entity.Drug;
 import com.evops.coldchain.entity.RouteSegment;
 import com.evops.coldchain.entity.RouteSegmentSnap;
 import com.evops.coldchain.entity.RouteVersion;
+import com.evops.coldchain.entity.TemperatureProbe;
 import com.evops.coldchain.entity.TransportBatch;
 import com.evops.coldchain.entity.Vehicle;
 import com.evops.coldchain.mapper.ExceptionEventMapper;
@@ -18,6 +21,7 @@ import com.evops.coldchain.mapper.RouteSegmentSnapMapper;
 import com.evops.coldchain.mapper.RouteVersionMapper;
 import com.evops.coldchain.mapper.TemperatureLogMapper;
 import com.evops.coldchain.service.OrderService;
+import com.evops.coldchain.service.ProbeService;
 import com.evops.coldchain.service.RouteService;
 import com.evops.coldchain.service.SeasonResolver;
 import com.evops.coldchain.service.TransportBatchService;
@@ -32,6 +36,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
@@ -97,6 +102,8 @@ class RouteTemperatureSegmentIntegrationTest {
     private RouteService routeService;
     @Autowired
     private TransportBatchService batchService;
+    @Autowired
+    private ProbeService probeService;
 
     // ====================================================================
     // 1) 配置入口 -> 发布 -> 派车 -> 分段温度/缓冲，全链路追到分段与快照落库
@@ -162,7 +169,8 @@ class RouteTemperatureSegmentIntegrationTest {
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<RouteSegmentSnap>()
                         .eq("batch_id", batchId)));
 
-        // —— 发运（HTTP 入口）：发运瞬间按季节选定生效版本并逐段固化快照 ——
+        // —— 发运（HTTP 入口）：先完成探头校准凭证关联，发运瞬间按季节选定生效版本并逐段固化快照 ——
+        ensureProbeBound(batchId);
         JsonNode shipResp = post("/batches/" + batchId + "/ship", new LinkedHashMap<>());
         assertTrue(shipResp.path("success").asBoolean(), shipResp.toString());
 
@@ -324,6 +332,7 @@ class RouteTemperatureSegmentIntegrationTest {
                 "热替换：旧版本置 SUPERSEDED");
 
         // A 直到此刻才发运：未发运批次取发运当时的新版本 V2（而不是派车时的 V1）
+        ensureProbeBound(batchA);
         batchService.ship(batchA);
         List<RouteSegmentSnap> snapsA = routeService.listSnapshotsByBatch(batchA);
         assertEquals(2, snapsA.size());
@@ -332,6 +341,7 @@ class RouteTemperatureSegmentIntegrationTest {
 
         // 批次B 派车并发运（V2 生效中）-> 同样固化 V2
         Long batchB = dispatchViaServiceWithRoute(routeId);
+        ensureProbeBound(batchB);
         batchService.ship(batchB);
         assertSnap(routeService.listSnapshotsByBatch(batchB).get(0), 0, 50, 3, 7, 45, "丙");
 
@@ -351,6 +361,7 @@ class RouteTemperatureSegmentIntegrationTest {
 
         // V3 之后才派车并发运的批次C 取 V3
         Long batchC = dispatchViaServiceWithRoute(routeId);
+        ensureProbeBound(batchC);
         batchService.ship(batchC);
         assertSnap(routeService.listSnapshotsByBatch(batchC).get(0), 0, 50, 1, 6, 20, "丁");
         assertEquals(3, batchService.requireBatch(batchC).getRouteVersionNo());
@@ -414,9 +425,10 @@ class RouteTemperatureSegmentIntegrationTest {
                 segment(0, 50, 2, 8, 30, "通甲"), segment(50, 100, 0, 5, 60, "通乙")), null);
         publishVersion(generalId);
 
-        // 秋季时点：命中当季 AUTUMN，而非 GENERAL
-        assertEquals(autumnId,
-                routeService.selectEffectiveAt(routeId, LocalDateTime.of(2026, 10, 1, 8, 0)).getId());
+        // 秋季时点：命中当季 AUTUMN，而非 GENERAL。
+        // 取未来的固定秋季时刻，确保晚于版本“即时发布”的当前时间（避免在秋季当天早于发布时刻运行时落空）。
+        LocalDateTime autumnAt = LocalDateTime.of(2099, 10, 15, 8, 0);
+        assertEquals(autumnId, routeService.selectEffectiveAt(routeId, autumnAt).getId());
         // 冬季/夏季（未配置）：回退 GENERAL
         assertEquals(generalId,
                 routeService.selectEffectiveAt(routeId, LocalDateTime.of(2027, 1, 20, 8, 0)).getId());
@@ -544,6 +556,37 @@ class RouteTemperatureSegmentIntegrationTest {
             vehicleId = vehicleService.create(vr).getId();
         }
         return vehicleId;
+    }
+
+    private Long sharedProbeId;
+
+    /** 全测试共享一个在效探头（证书有效期两年）；同一探头可分别绑定不同批次 */
+    private Long ensureValidProbe() {
+        if (sharedProbeId == null) {
+            ProbeCreateRequest pc = new ProbeCreateRequest();
+            pc.setSerialNo("SN-ROUTE-" + System.nanoTime());
+            pc.setModel("TP-ROUTE");
+            pc.setMeasureMin(new BigDecimal("-40.00"));
+            pc.setMeasureMax(new BigDecimal("80.00"));
+            pc.setCalibOrg("验收计量院");
+            LocalDateTime until = LocalDateTime.now().plusYears(2);
+            pc.setValidUntil(until);
+            TemperatureProbe probe = probeService.createProbe(pc);
+            MockMultipartFile file = new MockMultipartFile(
+                    "file", "route-calib.pdf", "application/pdf",
+                    ("route-cert-" + probe.getSerialNo()).getBytes());
+            probeService.uploadCertificate(probe.getId(), file, "CERT-ROUTE", until.minusYears(1), until);
+            sharedProbeId = probe.getId();
+        }
+        return sharedProbeId;
+    }
+
+    /** 发运前完成车载探头校准凭证关联（V3 硬约束） */
+    private void ensureProbeBound(Long batchId) {
+        ProbeBindRequest req = new ProbeBindRequest();
+        req.setBatchId(batchId);
+        req.setProbeId(ensureValidProbe());
+        probeService.bindOrReplace(req);
     }
 
     private Long prepareOrder() {

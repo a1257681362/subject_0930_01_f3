@@ -55,6 +55,7 @@ public final class CcConstants {
     public static final String ENT_TEMPERATURE = "TEMPERATURE";
     public static final String ENT_EXCEPTION = "EXCEPTION";
     public static final String ENT_ROUTE = "ROUTE";
+    public static final String ENT_PROBE = "PROBE";
 
     // 操作动作
     public static final String ACT_CREATE = "CREATE";
@@ -72,4 +73,21 @@ public final class CcConstants {
     public static final String ACT_ROUTE_PUBLISH = "ROUTE_PUBLISH";
     public static final String ACT_ROUTE_WITHDRAW = "ROUTE_WITHDRAW";
     public static final String ACT_ROUTE_DIFF = "ROUTE_DIFF";
+
+    // 探头校准凭证（V3）
+    /** 证书状态：在库可用 / 已作废（作废只置状态，不删文件） */
+    public static final String CERT_VALID = "VALID";
+    public static final String CERT_VOID = "VOID";
+    /** 批次绑定状态：活跃 / 已被新探头替换 / 已主动解绑 */
+    public static final String BIND_ACTIVE = "ACTIVE";
+    public static final String BIND_REPLACED = "REPLACED";
+    public static final String BIND_UNBOUND = "UNBOUND";
+
+    public static final String ACT_PROBE_CREATE = "PROBE_CREATE";
+    public static final String ACT_CERT_UPLOAD = "CERT_UPLOAD";
+    public static final String ACT_CERT_DOWNLOAD = "CERT_DOWNLOAD";
+    public static final String ACT_CERT_VOID = "CERT_VOID";
+    public static final String ACT_PROBE_BIND = "PROBE_BIND";
+    public static final String ACT_PROBE_REPLACE = "PROBE_REPLACE";
+    public static final String ACT_PROBE_UNBIND = "PROBE_UNBIND";
 }

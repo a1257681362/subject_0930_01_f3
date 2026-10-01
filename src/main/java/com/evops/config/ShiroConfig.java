@@ -21,6 +21,8 @@ public class ShiroConfig {
         chain.addPathDefinition("/error", "anon");
         // 冷链台账接口使用 HTTP Basic，便于 curl/联调；浏览器会弹出登录框
         chain.addPathDefinition("/api/**", "authcBasic");
+        // 探头校准凭证管理页面同样使用 HTTP Basic（与接口同源登录态）
+        chain.addPathDefinition("/ui/**", "authcBasic");
         chain.addPathDefinition("/**", "authc");
         return chain;
     }

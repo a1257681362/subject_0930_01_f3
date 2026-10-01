@@ -22,6 +22,8 @@ public class TemperatureLog extends CreateOnlyEntity {
     private BigDecimal mileageKm;
     /** 命中的批次路线分段序号；无路线批次为空 */
     private Integer segmentSeq;
+    /** 实际采集该温度点的探头（替换探头后新记录挂新探头，历史行永不回写） */
+    private Long probeId;
 
     public Long getBatchId() { return batchId; }
     public void setBatchId(Long batchId) { this.batchId = batchId; }
@@ -39,4 +41,6 @@ public class TemperatureLog extends CreateOnlyEntity {
     public void setMileageKm(BigDecimal mileageKm) { this.mileageKm = mileageKm; }
     public Integer getSegmentSeq() { return segmentSeq; }
     public void setSegmentSeq(Integer segmentSeq) { this.segmentSeq = segmentSeq; }
+    public Long getProbeId() { return probeId; }
+    public void setProbeId(Long probeId) { this.probeId = probeId; }
 }

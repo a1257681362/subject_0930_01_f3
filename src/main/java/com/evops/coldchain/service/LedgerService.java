@@ -2,21 +2,26 @@ package com.evops.coldchain.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.evops.coldchain.entity.Drug;
+import com.evops.coldchain.entity.BatchProbeBinding;
 import com.evops.coldchain.entity.ExceptionEvent;
 import com.evops.coldchain.entity.ExceptionEvidence;
 import com.evops.coldchain.entity.OpLog;
+import com.evops.coldchain.entity.ProbeCertificate;
 import com.evops.coldchain.entity.Route;
 import com.evops.coldchain.entity.RouteSegmentSnap;
 import com.evops.coldchain.entity.RouteVersion;
 import com.evops.coldchain.entity.ShipmentOrder;
 import com.evops.coldchain.entity.TemperatureLog;
+import com.evops.coldchain.entity.TemperatureProbe;
 import com.evops.coldchain.entity.TransportBatch;
 import com.evops.coldchain.entity.Vehicle;
 import com.evops.coldchain.mapper.DrugMapper;
 import com.evops.coldchain.mapper.ExceptionEvidenceMapper;
+import com.evops.coldchain.mapper.ProbeCertificateMapper;
 import com.evops.coldchain.mapper.RouteMapper;
 import com.evops.coldchain.mapper.RouteVersionMapper;
 import com.evops.coldchain.mapper.ShipmentOrderMapper;
+import com.evops.coldchain.mapper.TemperatureProbeMapper;
 import com.evops.coldchain.mapper.TransportBatchMapper;
 import com.evops.coldchain.mapper.VehicleMapper;
 import com.evops.common.BusinessException;
@@ -51,7 +56,13 @@ public class LedgerService {
     @Resource
     private ExceptionEvidenceMapper evidenceMapper;
     @Resource
+    private TemperatureProbeMapper probeMapper;
+    @Resource
+    private ProbeCertificateMapper certificateMapper;
+    @Resource
     private TransportBatchService batchService;
+    @Resource
+    private ProbeService probeService;
     @Resource
     private RouteService routeService;
     @Resource
@@ -109,9 +120,38 @@ public class LedgerService {
         versionCheck.put("drugCurrentVersion", drug == null ? null : drug.getCurrentVersion());
         versionCheck.put("checkByFrozenVersion", true);
         ledger.put("versionCheck", versionCheck);
+
+        // 车载探头校准凭证：当前绑定探头（含证书摘要/有效期）+ 完整替换链条
+        ledger.put("probe", buildProbeInfo(batchId, batch.getProbeId()));
+
         ledger.put("temperatures", temps);
         ledger.put("exceptions", exceptionList);
         ledger.put("opLogs", opLogs);
         return ledger;
+    }
+
+    /** 组装当前探头、采信证书与完整绑定链条（替换前后关系）；历史温度行各自的 probeId 不回写 */
+    private Map<String, Object> buildProbeInfo(Long batchId, Long currentProbeId) {
+        List<BatchProbeBinding> chain = probeService.listBindingChain(batchId);
+        if (chain.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> chainView = new ArrayList<>();
+        for (BatchProbeBinding b : chain) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("binding", b);
+            item.put("probe", probeMapper.selectById(b.getProbeId()));
+            item.put("certificate", certificateMapper.selectById(b.getCertId()));
+            chainView.add(item);
+        }
+        Map<String, Object> info = new LinkedHashMap<>();
+        TemperatureProbe currentProbe = currentProbeId == null ? null : probeMapper.selectById(currentProbeId);
+        info.put("currentProbe", currentProbe);
+        BatchProbeBinding active = probeService.findActiveBinding(batchId);
+        if (active != null) {
+            info.put("currentCertificate", certificateMapper.selectById(active.getCertId()));
+        }
+        info.put("bindingChain", chainView);
+        return info;
     }
 }
